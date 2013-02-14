@@ -45,6 +45,41 @@
 //===========================================================================================
 #pragma mark - Private Category
 //===========================================================================================
+@interface NSMutableArray (CoreSorted)
+
+- (void) sortedAddObject:(id)anObject;
+- (NSUInteger) binarySearch:(id)anObject;
+
+@end
+
+CFComparisonResult arrayObjectCompare(const void * obj1, const void *obj2, void *context)
+{
+    return (CFComparisonResult)[(id)obj1 compare:(id)obj2];
+}
+
+@implementation NSMutableArray (CoreSorted)
+
+- (void) sortedAddObject:(id)anObject
+{
+    NSUInteger l = self.count;
+    CFIndex idx = CFArrayBSearchValues((CFArrayRef)self, CFRangeMake(0, l), anObject, arrayObjectCompare, nil);
+    if (idx < l)
+        [self insertObject:anObject atIndex:idx];
+    else
+        [self addObject:anObject];
+}
+- (NSUInteger) binarySearch:(id)anObject
+{
+    NSUInteger l = self.count;
+    CFIndex idx = CFArrayBSearchValues((CFArrayRef)self, CFRangeMake(0, l), anObject, arrayObjectCompare, nil);
+    if (idx < l && [anObject isEqual:[self objectAtIndex:idx]])
+        return idx;
+    return NSNotFound;
+}
+
+@end
+
+
 @interface A3GridTableView (){
     
     //=======================================================
@@ -71,6 +106,7 @@
     
     //=======================================================
     // Layouting Information
+    CGFloat _heightForHeaders;
     NSInteger numberOfSections;
     NSInteger *numberOfRowsInSection;
     
@@ -109,12 +145,12 @@
 // layouting
 - (void)_layoutCells;
 - (void)_layoutHeaders;
-- (CGFloat)_heightForHeaders;
 
 /**
  @description This method updates the Layout by building all frames and store them in cellFrames
  */
 - (void)_updateCellFrames;
+- (CGRect)_cellFrame:(NSInteger)section row:(NSInteger)row;
 
 // memory
 - (void)freeSectionWidths;
@@ -144,6 +180,8 @@
 //===========================================================================================
 @implementation A3GridTableView
 @synthesize delegate = _delegateGridTableView;
+@synthesize defaultHeaderHeight = _defaultHeaderHeight;
+@synthesize defaultCellHeight = _defaultCellHeight;
 
 //===========================================================================================
 #pragma mark - Constructors
@@ -167,6 +205,9 @@
     _sectionWidths = NULL;
     _sectionXOrigins = NULL;
     _cellFrames = NULL;
+    
+    _defaultHeaderHeight = 44.0f;
+    _defaultCellHeight = 44.0f;
     
     numberOfSections = 0;
     numberOfRowsInSection = NULL;
@@ -313,9 +354,10 @@
         // create help array for enumarating
         NSArray *visibleCellsHelper = [NSArray arrayWithArray:[_visibleCells allObjects]];
         
+        CGRect vr = self.visibleRect;
         // purge not visible cells
         for (A3GridTableViewCell *cell in visibleCellsHelper) {
-            if (!CGRectIntersectsRect(cell.frame, [self visibleRect])) {
+            if (!CGRectIntersectsRect(cell.frame, vr)) {
                 
                 // remove from visible cells
                 [_visibleCells removeObject:cell];
@@ -327,24 +369,20 @@
         
         // load new cells and add them as subview
         for (NSIndexPath *indexPath in newVisibleIndexPaths) {
-            if (![_visibleIndexPaths containsObject:indexPath]) {
+            if ([_visibleIndexPaths binarySearch:indexPath] == NSNotFound) {
                 // don't do an integrity check ([respondsToSelector:]) because the dataSource has to implement it.
                 A3GridTableViewCell *newCell = [self.dataSource A3GridTableView:self cellForRowAtIndexPath:indexPath];
                 
                 // set correct cellframe
-                newCell.frame = _cellFrames[indexPath.section][indexPath.row];
+                newCell.frame = [self _cellFrame:indexPath.section row:indexPath.row];
                 newCell.indexPath = indexPath;
                 
                 // add cell as subview
                 [self insertSubview:newCell atIndex:0];
                 
                 // select / deselect cell
-                if ([_selectedIndexPaths containsObject:newCell.indexPath]) {
-                    newCell.selected = YES;
-                }
-                else{
-                    newCell.selected = NO;
-                }
+                newCell.selected = [_selectedIndexPaths binarySearch:newCell.indexPath] != NSNotFound;
+
                 
                 // add to visible cells
                 [_visibleCells addObject:newCell];
@@ -364,9 +402,17 @@
 
 
 - (void)_layoutHeaders{
+    
+    _heightForHeaders = 0.0f;
     // check if datasource implements the required method
     if (![self.dataSource respondsToSelector:@selector(A3GridTableView:headerForSection:)])
         return;
+    
+    // check header height and store the offset
+    if ([self.dataSource respondsToSelector:@selector(heightForHeadersInA3GridTableView:)])
+        _heightForHeaders = [self.dataSource heightForHeadersInA3GridTableView:self];
+    else
+        _heightForHeaders = 44.0f;
     
     // get new visible indexPath
     NSArray *newVisibleIndexPaths = [self indexPathsForVisibleSections];
@@ -374,13 +420,14 @@
     // create help array for enumarating
     NSArray *visibleHeadersHelper = [NSArray arrayWithArray:[_visibleHeaders allObjects]];
     
+    CGRect vr = self.visibleRect;
     // purge not visible headers
     for (A3GridTableViewCell *header in visibleHeadersHelper) {
         CGRect helpHeaderFrame = [self visibleRect];
         helpHeaderFrame.origin.x = header.frame.origin.x;
         helpHeaderFrame.size.width = header.frame.size.width;
         
-        if (!CGRectIntersectsRect(helpHeaderFrame, [self visibleRect])) {
+        if (!CGRectIntersectsRect(helpHeaderFrame, vr)) {
             
             // remove from visible cells
             [_visibleHeaders removeObject:header];
@@ -393,7 +440,7 @@
     
     // load new headers and add them as subview
     for (NSIndexPath *indexPath in newVisibleIndexPaths) {
-        if (![_visibleSectionIndexPaths containsObject:indexPath]) {
+        if ([_visibleSectionIndexPaths binarySearch:indexPath] == NSNotFound) {
             // don't do an integrity check ([respondsToSelector:]) because i do it at the top if this function
             A3GridTableViewCell *newHeader = [self.dataSource A3GridTableView:self headerForSection:indexPath.section];
             newHeader.indexPath = indexPath;
@@ -402,7 +449,7 @@
             [self addSubview:newHeader];
             
             // set correct cellframe
-            newHeader.frame = (CGRect){0, 0, _sectionWidths[indexPath.section], [self _heightForHeaders]};
+            newHeader.frame = (CGRect){0, 0, _sectionWidths[indexPath.section], _heightForHeaders};
             
             // add to visible cells
             [_visibleHeaders addObject:newHeader];
@@ -425,19 +472,6 @@
     // udpate visible paths
     [_visibleSectionIndexPaths removeAllObjects];
     [_visibleSectionIndexPaths addObjectsFromArray:newVisibleIndexPaths];
-}
-
-- (CGFloat)_heightForHeaders{
-    CGFloat heightForHeader = 0.0f;
-    if ([self.dataSource respondsToSelector:@selector(A3GridTableView:headerForSection:)]) {
-        // check header height and store the offset
-        if ([self.dataSource respondsToSelector:@selector(heightForHeadersInA3GridTableView:)])
-            heightForHeader = [self.dataSource heightForHeadersInA3GridTableView:self];
-        else
-            heightForHeader = 44.0f;
-    }
-    
-    return heightForHeader;
 }
 
 - (void)_updateCellFrames{
@@ -482,58 +516,65 @@
         originSectionX += _sectionWidths[i];
     }
     
-    
-    // create new cellFrames Array and create correct Frames for the position
-    _cellFrames = (CGRect**)calloc(1, sizeof(CGRect *) * numberOfSections + 1);
-    
     // Contentsize
-    CGSize newContentSize = CGSizeMake(0.0f, self.bounds.size.height+1.0f);
+    CGSize newContentSize = CGSizeMake(originSectionX, self.bounds.size.height+1.0f);
     
     // origins
     CGFloat originX = 0.0f;
     CGFloat originY = 0.0f;
-    CGFloat offsetYForHeader = [self _heightForHeaders];
     
-    // build frame map
-    for (int i = 0; i < numberOfSections; i++) {
-        // get number of rows in section from datasource and alloc the array
-        numberOfRowsInSection[i] = [self.dataSource A3GridTableView:self numberOfRowsInSection:i];
-        _cellFrames[i] = (CGRect*)malloc(sizeof(CGRect) * numberOfRowsInSection[i]);
+    if ([self.dataSource respondsToSelector:@selector(A3GridTableView:heightForRowAtIndexPath:)])
+    {    
+        // create new cellFrames Array and create correct Frames for the position
+        _cellFrames = (CGRect**)calloc(1, sizeof(CGRect *) * numberOfSections + 1);
         
-        // sizes
-        CGFloat width = _sectionWidths[i];
-        CGFloat height = 0.0f;
-        
-        // build frames for that collumn
-        for (int j = 0; j < numberOfRowsInSection[i]; j++) {
+        // build frame map
+        for (int i = 0; i < numberOfSections; i++) {
+            // get number of rows in section from datasource and alloc the array
+            numberOfRowsInSection[i] = [self.dataSource A3GridTableView:self numberOfRowsInSection:i];
+            _cellFrames[i] = (CGRect*)malloc(sizeof(CGRect) * numberOfRowsInSection[i]);
             
-            // ask the datasource for the cell height
-            if ([self.dataSource respondsToSelector:@selector(A3GridTableView:heightForRowAtIndexPath:)])
+            // sizes
+            CGFloat width = _sectionWidths[i];
+            CGFloat height = 0.0f;
+            
+            // build frames for that collumn
+            for (int j = 0; j < numberOfRowsInSection[i]; j++) {
+                
+                // ask the datasource for the cell height
                 height = [self.dataSource A3GridTableView:self heightForRowAtIndexPath:[NSIndexPath indexPathForRow:j inSection:i]];
-            else
-                // default ist 44 points
-                height = 44.0f;
+
+                // set the frame
+                _cellFrames[i][j] = (CGRect){originX, originY + _heightForHeaders, width, height};
+                
+                // update originY
+                originY += height;
+            }
             
-            // set the frame
-            _cellFrames[i][j] = (CGRect){originX, originY+offsetYForHeader, width, height};
+            // update contentsize
+            newContentSize.height = MAX(newContentSize.height, originY + _heightForHeaders);
             
-            // update originY
-            originY += height;
+            // update originX and Y
+            originX += width;
+            originY = 0.0f;
         }
-        
-        // update contentsize
-        newContentSize.width += width;
-        newContentSize.height = MAX(newContentSize.height, originY + offsetYForHeader);
-        
-        // update originX and Y
-        originX += width;
-        originY = 0.0f;
+    } else {
+        for (int i = 0; i < numberOfSections; i++) {
+            // get number of rows in section from datasource and alloc the array
+            numberOfRowsInSection[i] = [self.dataSource A3GridTableView:self numberOfRowsInSection:i];
+            newContentSize.height = MAX(newContentSize.height, numberOfRowsInSection[i] * _defaultCellHeight + _heightForHeaders);
+        }
     }
-    
     // set contentsize
     self.contentSize = newContentSize;
 }
 
+- (CGRect)_cellFrame:(NSInteger)section row:(NSInteger)row
+{
+    if (_cellFrames)
+        return _cellFrames[section][row];
+    return CGRectMake(_sectionXOrigins[section], row * _defaultCellHeight + _heightForHeaders, _sectionWidths[section], _defaultCellHeight);
+}
 
 //================================
 #pragma mark Paging
@@ -670,11 +711,11 @@
     for (A3GridTableViewCell *cell in [self visibleCells]) {
         if (animated) {
             [UIView animateWithDuration:0.4 animations:^{
-                cell.frame = _cellFrames[cell.indexPath.section][cell.indexPath.row];
+                cell.frame = [self _cellFrame:cell.indexPath.section row:cell.indexPath.row];
             }];
         }
         else{
-            cell.frame = _cellFrames[cell.indexPath.section][cell.indexPath.row];
+            cell.frame = [self _cellFrame:cell.indexPath.section row:cell.indexPath.row];
         }
     }
 }
@@ -833,7 +874,7 @@
         
         if (CGRectContainsPoint(cell.frame, touchPoint)) {
             // deselect cell
-            if ([_selectedIndexPaths containsObject:cell.indexPath]) {
+            if ([_selectedIndexPaths binarySearch:cell.indexPath] != NSNotFound) {
                 [self deselectCellAtIndexPath:cell.indexPath animated:YES];
             }
             // Select cell
@@ -843,7 +884,7 @@
         }
         else{
             // deselect not touched cell if multiple selection isn't enabled
-            if (!self.allowsMultipleSelection && [_selectedIndexPaths containsObject:cell.indexPath]) {
+            if (!self.allowsMultipleSelection && [_selectedIndexPaths binarySearch:cell.indexPath] != NSNotFound) {
                 [self deselectCellAtIndexPath:cell.indexPath animated:YES];
             }
         }
@@ -988,8 +1029,8 @@
             free(_cellFrames[i]);
             _cellFrames[i] = NULL;
         }
+        free(_cellFrames);
     }
-    free(_cellFrames);
     _cellFrames = NULL;
 }
 
@@ -1015,7 +1056,7 @@
 - (void)selectCellAtIndexPath:(NSIndexPath *)indexPath animated:(BOOL)animated{
     
     // add index to selected indices
-    [_selectedIndexPaths addObject:indexPath];
+    [_selectedIndexPaths sortedAddObject:indexPath];
     
     // set cell selection
     for (A3GridTableViewCell *cell in [self visibleCells]) {
@@ -1036,7 +1077,8 @@
 - (void)deselectCellAtIndexPath:(NSIndexPath *)indexPath animated:(BOOL)animated{
     
     // remove indexpath from selected indices
-    [_selectedIndexPaths removeObject:indexPath];
+   [_selectedIndexPaths removeObjectAtIndex: [_selectedIndexPaths binarySearch:indexPath]];
+
     
     // set cell selection
     for (A3GridTableViewCell *cell in [self visibleCells]) {
@@ -1055,7 +1097,7 @@
 
 - (void)scrollToCellAtIndexPath:(NSIndexPath *)indexPath atCellAlignment:(A3GridTableViewCellAlignment)alignment atScrollPosition:(UITableViewScrollPosition)scrollPosition animated:(BOOL)animated{
     // get frame of cell at the index
-    CGRect rectOfCellAtIndexPath = _cellFrames[indexPath.section][indexPath.row];
+    CGRect rectOfCellAtIndexPath = [self _cellFrame:indexPath.section row:indexPath.row];
     CGPoint newContentOffset = rectOfCellAtIndexPath.origin;
     
     // align horizontaly
@@ -1119,19 +1161,28 @@
     
     // iterate through all cells
     for (int i = 0; i < numberOfSections; i++) {
-        for (int j = 0; j < numberOfRowsInSection[i]; j++) {
-            
-            // get frame of cell at the indexpath
-            CGRect cellFrame = _cellFrames[i][j];
-            
-            // if frame of cell is inside the visible frame of
-            // the scrollview then add it to the indexPath array
-            if (CGRectIntersectsRect(cellFrame, rect)) {
-                [indexPaths addObject:[NSIndexPath indexPathForRow:j inSection:i]];
+        
+        if (_sectionXOrigins[i] < rect.origin.x + rect.size.width && _sectionXOrigins[i] + _sectionWidths[i] > rect.origin.x)
+        {
+            int l = 0, r = numberOfRowsInSection[i];
+            while (l < r)
+            {
+                int m = (l+r)/2;
+                if ([self _cellFrame:i row:m].origin.y < rect.origin.y)
+                    l = m + 1;
+                else
+                    r = m - 1;
             }
+            
+            if (l)
+                ++l;
+            for (; l < numberOfRowsInSection[i] && [self _cellFrame:i row:l].origin.y < rect.origin.y + rect.size.height; ++l)
+                [indexPaths addObject:[NSIndexPath indexPathForRow:l inSection:i]];
+            
         }
     }
     
+    [indexPaths sortUsingSelector:@selector(compare:)];
     return [indexPaths autorelease];
 }
 
@@ -1162,6 +1213,7 @@
         posX += _sectionWidths[i];
     }
     
+    [indexPaths sortUsingSelector:@selector(compare:)];
     return [indexPaths autorelease];
 }
 

@@ -103,7 +103,7 @@
     [super setFrame:frame];
     
     // update title label
-    _titleLabel.frame = CGRectMake(10.0f, 0.0f, _contentView.bounds.size.width - 10.0f, _contentView.bounds.size.height);
+    _titleLabel.frame = CGRectMake(5.0f, 0.0f, _contentView.bounds.size.width - 10.0f, _contentView.bounds.size.height);
     _titleLabel.autoresizingMask = UIViewAutoresizingFlexibleHeight | UIViewAutoresizingFlexibleWidth;
 }
 

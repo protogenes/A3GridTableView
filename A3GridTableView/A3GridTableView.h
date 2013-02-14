@@ -310,6 +310,8 @@ typedef enum {
 //===========================================
 - (CGRect)visibleRect;
 
+@property (atomic, assign) CGFloat defaultHeaderHeight;
+@property (atomic, assign) CGFloat defaultCellHeight;
 
 //===========================================
 #pragma mark paging
